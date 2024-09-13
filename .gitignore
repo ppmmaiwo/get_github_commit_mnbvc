@@ -1,0 +1,7 @@
+output/
+test/
+.idea/
+app.log
+success.txt
+fail.txt
+
