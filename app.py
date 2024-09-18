@@ -120,17 +120,17 @@ class GitHubTokenManager:
         self.current_token_index = 0
         self.token_remaining = 0
         self.session = session
-        self.current_ip_index = -1
+        self.current_ip_index = 0
         self.ips_speed = list()
         if len(self.tokens) == 0:
             logging.error("github_tokens.txt 需要至少要填入一个token")
             sys.exit(1)
 
-    def test_speed(self):
-        domain = "github.com"
+    def test_speed(self, url="https://github.com"):
+        # domain = "github.com"
 
         with concurrent.futures.ThreadPoolExecutor() as executor:
-            future_to_ip = {executor.submit(self.test_ip_speed, domain, ip): ip for ip in self.ips}
+            future_to_ip = {executor.submit(self.test_ip_speed, url, ip): ip for ip in self.ips}
             for future in concurrent.futures.as_completed(future_to_ip):
                 speed = future.result()
                 if speed['is_connected']:
@@ -139,15 +139,19 @@ class GitHubTokenManager:
         logging.debug("test speed result {}".format(self.ips_speed))
         # return speeds
 
-    def test_ip_speed(self, hostname: str, ip: str):
+    def test_ip_speed(self, url: str, ip: str):
         try:
-            logger.debug("Testing IP Speed {} for {}".format(hostname, ip))
-            r = requests.head(f"https://{ip}", headers={"host": hostname}, verify=False, timeout=5)
+            hostname = urlparse(url).hostname
+            new_url = url.replace(hostname, ip, 1)
+            logger.debug("Testing IP Speed {} for {} host {}".format(url, ip, hostname))
+            r = requests.head(new_url, headers={"host": hostname}, verify=False, timeout=5)
+            logger.debug("IP Speed {} for {} status_code {}".format(hostname, ip, r.status_code))
             if r.status_code < 500:
                 return {'ip': ip, 'speed': r.elapsed.microseconds, 'is_connected': True}
             else:
                 return {'ip': ip, 'speed': r.elapsed.microseconds, 'is_connected': False}
-        except:
+        except Exception as e:
+            logger.error("test_ip_speed error {}".format(e))
             return {'ip': ip, 'speed': float('inf'), 'is_connected': False}
 
     def load_tokens(self, file_path):
@@ -168,7 +172,7 @@ class GitHubTokenManager:
                 self.rotate_token()
                 time.sleep(1)
             except Exception as e:
-                logger.error("{} {}".format(traceback.format_exc(),e))
+                logger.error("{} {}".format(traceback.format_exc(), e))
 
         return self.get_current_token()
 
@@ -182,16 +186,19 @@ class GitHubTokenManager:
 
     def rotate_token(self):
         if self.token_remaining > 0:
-            logger.debug(f"Rotating token. return current token.  {self.get_current_token()} {self.current_ip_index}  / {len(self.ips_speed)}.")
+            logger.debug(
+                f"Rotating token. return current token.  {self.get_current_token()} {self.current_ip_index}  / {len(self.ips_speed)}.")
             return
         if self.token_remaining <= 0:
-            if self.current_ip_index >= len(self.ips_speed):
+            if self.current_ip_index >= len(self.ips_speed) - 1:
                 self.current_token_index += 1
                 self.current_ip_index = 0
-                logger.info(f"Rotated  token   {self.get_current_token()} {self.current_ip_index}  / {len(self.ips_speed)}.")
+                logger.info(
+                    f"Rotated  token   {self.get_current_token()} {self.current_ip_index}  / {len(self.ips_speed)}.")
             else:
                 self.current_ip_index += 1
-                logger.info(f"Rotated  ip   {self.get_current_token()} {self.current_ip_index}  / {len(self.ips_speed)}.")
+                logger.info(
+                    f"Rotated  ip   {self.get_current_token()} {self.current_ip_index}  / {len(self.ips_speed)}.")
 
         response = self.request_rate_limit()
         if response is None:
@@ -214,6 +221,7 @@ class GitHubTokenManager:
                 self.token_remaining = 0
                 return
             else:
+                logger.info("所有token都尝试过了，开始等待reset")
                 logger.info(f"wait token {self.get_current_token()} to reset")
                 self.wait_for_reset(time_diff)
                 response = self.session.get(self.RATE_LIMIT_URL,
@@ -232,6 +240,7 @@ class GitHubTokenManager:
             logger.error(e)
             return None
         return response
+
     def get_current_token(self):
         token_index = self.current_token_index % len(self.tokens)
         return self.tokens[token_index]
@@ -247,11 +256,11 @@ class GitHubTokenManager:
 
     def wait_for_reset(self, wait_time):
         logger.info(f"Waiting for rate limit reset: {wait_time} seconds.")
-        with tqdm(total=wait_time, desc="Waiting for token reset"):
+        with tqdm(total=wait_time, desc="Waiting for token reset") as pbar:
             while wait_time > 0:
                 wait_time -= 1
                 time.sleep(1)
-                tqdm.update(1)
+                pbar.update(1)
         logger.info("Token reset complete. Continuing operations.")
 
 
@@ -419,12 +428,14 @@ class Application:
 
     def test_tokens(self):
         logger.info("test tokens")
-        self.config.token_manager.test_speed()
-        # self.config.get_header()
+        config.token_manager.RATE_LIMIT_URL = "http://127.0.0.1"
+        config.token_manager.ips = ['127.0.0.1','localhost']
+        self.config.token_manager.test_speed("http://localhost")
         for i in range(50):
             logger.debug(f"test token loop {i}")
+            logger.debug(
+                f"test token  loop end {i} header {self.config.get_header(config.token_manager.RATE_LIMIT_URL)}")
             self.config.token_manager.update_token_remaining(0)
-            logger.debug(f"test token  loop end {i} header {self.config.get_header(config.token_manager.RATE_LIMIT_URL)}")
 
     def run(self):
         self.config.token_manager.test_speed()
@@ -445,7 +456,7 @@ class Application:
             except Exception as e:
                 self.config.safe_delete_file(repo.getout_file(repo_id))
                 self.config.mark_fail(repo_id, repo_url)
-                logger.exception("crawl {} exception {}  {}".format(repo_url, traceback.format_exc(),e))
+                logger.exception("crawl {} exception {}  {}".format(repo_url, traceback.format_exc(), e))
 
 
 if __name__ == '__main__':
