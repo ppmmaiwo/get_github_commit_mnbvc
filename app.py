@@ -1,6 +1,7 @@
 import argparse
 import concurrent.futures
 import glob
+import hashlib
 import sys
 import traceback
 from urllib.parse import urlparse
@@ -287,7 +288,7 @@ class GitHubRepository:
         username, repository = self.get_github_repos_info(url)
         return f"https://api.github.com/repos/{username}/{repository}/commits"
 
-    def get_github_init_api_url(self, url, sha):
+    def get_github_commit_details_api_url(self, url, sha):
         username, repository = self.get_github_repos_info(url)
         return f"https://api.github.com/repos/{username}/{repository}/commits/{sha}"
 
@@ -322,56 +323,57 @@ class GitHubRepository:
         return commits
 
     def process_commit(self, commit, repo_id, repo_url):
-        commit_data = {}
+        commit_jsonl_data=[]
         commit_sha = commit["sha"]
-        commit_data["ID"] = commit["node_id"]
-        commit_data["来源"] = f'{repo_url}' + f'/{commit["sha"]}'
-        commit_data["提交消息"] = commit["commit"]["message"]
-        commit_data["提交人"] = commit["commit"]["author"]
-        commit_data["提交时间"] = datetime.strptime(commit["commit"]["committer"]["date"][:-1], '%Y-%m-%dT%H:%M:%S')
-        # 获取前一个提交的 SHA
-        parents = commit.get("parents", [])
-        # diff_url = f"{url}/compare/{parent_sha}...{commit_sha}"
-        diff_url = self.get_github_init_api_url(repo_url, commit_sha)
-        if parents:
-            parent_sha = parents[0]["sha"]
-            diff_url = self.get_github_compare_api_url(repo_url, parent_sha, commit_sha)
-        # 获取 diff 信息
-        logger.debug("get diff_url:{}".format(diff_url))
-        headers = self.config.get_header(diff_url)
+        commit_details_url = self.get_github_commit_details_api_url(repo_url, commit_sha)
+        logger.debug("get commit_details_url:{}".format(commit_details_url))
+        headers = self.config.get_header(commit_details_url)
         self.config.token_manager.consume_token()
-        diff_response = self.session.get(self.config.token_manager.get_url(diff_url), headers=headers, verify=False,
+        commit_details_response = self.session.get(self.config.token_manager.get_url(commit_details_url), headers=headers, verify=False,
                                          timeout=5 * 60)
-
-        remaining = diff_response.headers.get("X-RateLimit-Remaining")
+        username, repository = self.get_github_repos_info(repo_url)
+        remaining = commit_details_response.headers.get("X-RateLimit-Remaining")
         self.config.token_manager.update_token_remaining(remaining)
-        if diff_response.status_code == 200:
-            diff_data = diff_response.json()
+        if commit_details_response.status_code == 200:
+            commit_details = commit_details_response.json()
+            logger.debug("get commit_details_url:{} sucess".format(commit_details_url))
             # 获取 diff 内容
-            diff_content = diff_data.get("files", [])
-            commit_data["修改文件数量"] = len(diff_content)
-            patch = []
-            for file_diff in diff_content:
-                if "patch" in file_diff:
-                    patch_data = {}
-                    patch_data["文件路径"] = file_diff["filename"]
-                    patch_data["Patch"] = " ".join(file_diff["patch"].replace("﻿", " ").split())
-                    patch.append(patch_data)
-            commit_data["提交"] = patch
-            return commit_data
+            for file in commit_details.get("files", []):
+                file_name = file.get("filename")
+                file_extension = file_name.split(".")[-1] if "." in file_name else ""
+                diff_content = file.get("patch", "")
+                file_path = file.get("filename")
+                diff_md5 = hashlib.md5(diff_content.encode('utf-8')).hexdigest() if diff_content else ""
+                commit_date = commit_details["commit"]["author"]["date"]
+                formatted_date = datetime.strptime(commit_date, "%Y-%m-%dT%H:%M:%SZ").strftime("%Y%m%d")
+
+                jsonl_data = {
+                    "来源": "github",
+                    "仓库名": f"{username}/{repository}",
+                    "path": file_path,
+                    "文件名": file_name.split("/")[-1],
+                    "ext": file_extension,
+                    "index": f"{commit_details['parents'][0]['sha']}..{commit_details['sha']}" if commit_details.get(
+                        'parents') else commit_details["sha"],
+                    "message": commit_details["commit"]["message"],
+                    "diff": diff_content,
+                    "原始编码": "GBK",
+                    "md5": diff_md5,
+                    "时间": formatted_date,
+                    "扩展字段": json.dumps({})
+                }
+                commit_jsonl_data.append(jsonl_data)
+            return commit_jsonl_data
         else:
-            logger.debug(diff_response.json())
+            logger.debug(commit_details_response.json())
             logger.error(f"Failed to fetch diff data for commit {commit_sha}.")
             return None
 
     def write_to_file(self, json_data, filename):
         if not os.path.exists(self.config.output_dir):
             os.makedirs(self.config.output_dir)
-        with open(filename, 'a', encoding='utf-8') as f:
-            # 将 datetime 对象转换为字符串
-            json_data["提交时间"] = json_data["提交时间"].isoformat()
-            json.dump(json_data, f, ensure_ascii=False)
-            f.write('\n')
+        with open(filename, 'a', encoding='utf-8') as jsonl_file:
+            jsonl_file.write(json.dumps(json_data, ensure_ascii=False) + "\n")
 
     def get_next_filename(self, base_filename):
         """
