@@ -45,13 +45,14 @@ logger.addHandler(file_handler)
 
 
 class Config:
-    def __init__(self, repo_list_path, token_path, ips_path, success_path, fail_path, output_dir='./output'):
+    def __init__(self, repo_list_path, token_path, ips_path, success_path, fail_path, max_size, output_dir='./output'):
         self.repo_list = self.load_repos(repo_list_path)
         self.session = HTTPSessionManager.create_session()
         self.token_manager = GitHubTokenManager(token_path, ips_path, self.session)
         self.success_path = success_path
         self.output_dir = output_dir
         self.fail_path = fail_path
+        self.max_size = max_size
         self.success_repos = self.load_success()
         self.safe_delete_file(self.fail_path)
         logger.info("Config initialized.")
@@ -268,7 +269,8 @@ class GitHubTokenManager:
 class GitHubRepository:
 
     def __init__(self, repo_url, config):
-        self.MAX_FILE_SIZE = 500 * 1024 * 1024
+        # self.MAX_FILE_SIZE = 500 * 1024 * 1024
+        self.MAX_FILE_SIZE = config.max_size
         self.repo_url = repo_url
         self.config = config
         self.token_manager = config.token_manager
@@ -476,10 +478,14 @@ if __name__ == '__main__':
     # 添加 -i 参数，不强制，只判断有没有
     parser.add_argument('-f', '--force', action='store_true', help='Force download all repositories')
 
+    # 添加 max_size 参数，设置默认值为 500 * 1024 * 1024
+    parser.add_argument('-m', '--max_size', type=int, default=500 * 1024 * 1024,
+                        help='Maximum size in bytes (default: 500 MB)')
+
     # 解析命令行参数
     args = parser.parse_args()
 
-    config = Config(args.input, args.tokens, "github_ips.txt", 'success.txt', 'fail.txt')
+    config = Config(args.input, args.tokens, "github_ips.txt", 'success.txt', 'fail.txt', args.max_size)
     if args.force:
         config.clean_success()
     app = Application(config)
