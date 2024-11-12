@@ -5,7 +5,7 @@ import hashlib
 import sys
 import traceback
 from urllib.parse import urlparse
-
+# from charset_mnbvc import api
 import requests
 import json
 import os
@@ -280,7 +280,7 @@ class GitHubRepository:
     def get_github_repos_info(self, url):
         match = re.search(r"github\.com/([^/]+)/([^/]+)\.git", url)
         if not match:
-            logger.error(f"Could not find github commit url ${url}")
+            logger.error(f"Could not find github commit url {url}")
             return None
         username = match.group(1)
         repository = match.group(2)
@@ -344,6 +344,8 @@ class GitHubRepository:
                 file_name = file.get("filename")
                 file_extension = file_name.split(".")[-1] if "." in file_name else ""
                 diff_content = file.get("patch", "")
+                # coding_name = api.get_cn_charset(diff_content.encode('utf-8'), 'data')
+                coding_name ='utf-8'
                 file_path = file.get("filename")
                 diff_md5 = hashlib.md5(diff_content.encode('utf-8')).hexdigest() if diff_content else ""
                 commit_date = commit_details["commit"]["author"]["date"]
@@ -359,7 +361,7 @@ class GitHubRepository:
                         'parents') else commit_details["sha"],
                     "message": commit_details["commit"]["message"],
                     "diff": diff_content,
-                    "原始编码": "GBK",
+                    "原始编码": coding_name,
                     "md5": diff_md5,
                     "时间": formatted_date,
                     "扩展字段": json.dumps({})
@@ -455,7 +457,9 @@ class Application:
                 for k, commit in tqdm(enumerate(commits), total=num_commit, desc="Processing commit",
                                       unit="commit"):
                     commit_data = repo.process_commit(commit, repo_id, repo_url)
-                    repo.write_to_file(commit_data, repo.getout_file(repo_id))
+                    for commit_item_data in commit_data:
+                        # repo.write_to_file(commit_item_data, repo.getout_file(repo_id))
+                        repo.write_to_file(commit_item_data, repo.getout_file('github_commits_data'))
                 self.config.mark_success(repo_id)
             except Exception as e:
                 self.config.safe_delete_file(repo.getout_file(repo_id))
@@ -480,7 +484,7 @@ if __name__ == '__main__':
 
     # 添加 max_size 参数，设置默认值为 500 * 1024 * 1024
     parser.add_argument('-m', '--max_size', type=int, default=500 * 1024 * 1024,
-                        help='Maximum size in bytes (default: 500 MB)')
+                        help='Data file size settings: If it exceeds the maximum size, the file will be split. The default is 500 x 1024 x 1024 (500 MB).')
 
     # 解析命令行参数
     args = parser.parse_args()
@@ -491,3 +495,6 @@ if __name__ == '__main__':
     app = Application(config)
     app.run()
     # app.test_tokens()
+    # data = "@@ -1 +1,2 @@\n-GBK2312�ļ�\n\\ No newline at end of file\n+GBK2312�ļ�\n+�ļ�����\n\\ No newline at end of file"
+    # coding_name = api.get_cn_charset(data,'data')
+    # print(f"文件名:, 编码: {coding_name}")

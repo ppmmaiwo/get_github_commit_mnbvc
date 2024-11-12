@@ -11,8 +11,7 @@ pip install -r requirements.txt
 
 
 ```shell
- python ./get_github_commit.py -h
-usage: get_github_commit.py [-h] [-i INPUT] [-t TOKENS] [-f]
+usage: app.py [-h] [-i INPUT] [-t TOKENS] [-f] [-m MAX_SIZE]
 
 Process some files.
 
@@ -23,6 +22,8 @@ options:
   -t TOKENS, --tokens TOKENS
                         Path to the file containing GitHub tokens
   -f, --force           Force download all repositories
+  -m MAX_SIZE, --max_size MAX_SIZE
+                        Data file size settings: If it exceeds the maximum size, the file will be split. The default is 500 x 1024 x 1024 (500 MB).
   
 ```
 
