@@ -56,3 +56,4 @@ token3
 * success.txt 成功下载的repos_id
 * fail.txt 下载失败的记录
 
+。/data 成功下载jsonl文件示例数据
